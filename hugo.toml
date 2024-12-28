@@ -1,23 +1,23 @@
 baseURL = 'https://snasello.github.io'
-languageCode = 'en-us'
-title = 'My New Hugo Site'
-theme = ["github.com/theNewDynamic/gohugo-theme-ananke"]
+languageCode = 'en'
+title = ''
+theme = ["github.com/theNewDynamic/gohugo-theme-ananke/v2"]
 resourceDir = "../resources"
 
 DefaultContentLanguage = "en"
 SectionPagesMenu = "main"
-Paginate = 3                  # this is set low for demonstrating with dummy content. Set to a higher number
+pagination.pagerSize = 3                  # this is set low for demonstrating with dummy content. Set to a higher number
 googleAnalytics = ""
 enableRobotsTXT = true
 
 [languages]
 [languages.en]
-title = "Ananke"
+title = "Samuel Nasello"
 weight = 1
 contentDir = "content/en"
 # languageDirection = 'rtl' for Right-To-Left languages
 [languages.fr]
-title = "Ananke Fr"
+title = "Samuel Nasello"
 weight = 2
 contentDir = "content/fr"
 
@@ -28,7 +28,7 @@ filename = "sitemap.xml"
 
 [params]
 text_color = ""
-author = ""
+author = "Samuel Nasello"
 favicon = ""
 site_logo = ""
 description = "The last theme you'll ever need. Maybe."
@@ -36,6 +36,24 @@ description = "The last theme you'll ever need. Maybe."
 background_color_class = "bg-black"
 recent_posts_number = 3
 
-[[params.ananke_socials]]
-name = "twitter"
-url = "https://twitter.com/GoHugoIO"
+[params.ananke.social.share]
+networks = [
+  "linkedin",
+  "x-twitter"
+]
+
+[params.ananke.social.follow]
+networks = [
+  "github",
+  "linkedin",
+  "x-twitter"
+]
+
+[params.ananke.social.github]
+username = "snasello"
+
+[params.ananke.social.linkedin]
+username = "snasello"
+
+[params.ananke.social.x-twitter]
+username = "snasello"
