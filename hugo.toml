@@ -38,6 +38,7 @@ recent_posts_number = 3
 
 [params.ananke.social.share]
 networks = [
+  "bluesky",
   "linkedin",
   "x-twitter"
 ]
@@ -45,6 +46,7 @@ networks = [
 [params.ananke.social.follow]
 networks = [
   "github",
+  "bluesky",
   "linkedin",
   "x-twitter"
 ]
@@ -57,3 +59,6 @@ username = "snasello"
 
 [params.ananke.social.x-twitter]
 username = "snasello"
+
+[params.ananke.social.bluesky]
+username = "snasello.bsky.social"
