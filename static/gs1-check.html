@@ -157,6 +157,7 @@ td:first-child { font-family: var(--mono); }
       </div>
       <div class="actions">
         <button type="button" id="btn-stop">Arrêter le scan</button>
+        <button type="button" id="btn-torch" aria-pressed="false" hidden>Allumer la lampe</button>
       </div>
     </div>
     <p id="scan-status" class="scan-status" role="status"></p>
@@ -491,6 +492,34 @@ td:first-child { font-family: var(--mono); }
     return zxingReader;
   }
 
+  // ---------- Bip ----------
+  // iOS n'autorise le son qu'après un geste utilisateur : le contexte audio est créé/débloqué au clic.
+  var audioCtx = null;
+  function unlockAudio() {
+    try {
+      if (!audioCtx) {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        audioCtx = new AC();
+      }
+      if (audioCtx.state === "suspended") audioCtx.resume();
+    } catch (e) {}
+  }
+  function beep() {
+    if (!audioCtx) return;
+    try {
+      var t = audioCtx.currentTime, osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+      osc.type = "square";
+      osc.frequency.value = 1800;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.15, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.13);
+    } catch (e) {}
+  }
+
   function onCode(text) {
     var now = Date.now();
     if (text === lastText && now - lastTime < 2500) return;   // évite les doublons pendant le scan continu
@@ -499,6 +528,7 @@ td:first-child { font-family: var(--mono); }
     var current = input.value.replace(/\s+$/, "");
     input.value = (current ? current + "\n" : "") + line;
     render();
+    beep();
     if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
     frame.classList.add("hit"); setTimeout(function () { frame.classList.remove("hit"); }, 400);
     status("Code lu : " + line, "ok");
@@ -512,6 +542,68 @@ td:first-child { font-family: var(--mono); }
     stopScan();
   }
 
+  // ---------- Lampe (torch) ----------
+  // Supportée surtout par Chrome Android ; absente sur les appareils sans flash arrière
+  // et sur les navigateurs qui n'exposent pas la contrainte « torch ».
+  var btnTorch = document.getElementById("btn-torch");
+  var torchTrack = null, torchOn = false, torchManual = false, lightTimer = null, darkCount = 0, darkHinted = false;
+  var lightCanvas = document.createElement("canvas");
+  lightCanvas.width = 40; lightCanvas.height = 30;
+  var lightCtx = lightCanvas.getContext("2d", { willReadFrequently: true });
+
+  function setTorch(on) {
+    if (!torchTrack) return Promise.resolve();
+    return torchTrack.applyConstraints({ advanced: [{ torch: on }] }).then(function () {
+      torchOn = on;
+      btnTorch.textContent = on ? "Éteindre la lampe" : "Allumer la lampe";
+      btnTorch.setAttribute("aria-pressed", on ? "true" : "false");
+    }).catch(function () {});
+  }
+
+  function averageLuma() {
+    if (!video.videoWidth) return null;
+    lightCtx.drawImage(video, 0, 0, lightCanvas.width, lightCanvas.height);
+    var d = lightCtx.getImageData(0, 0, lightCanvas.width, lightCanvas.height).data, sum = 0;
+    for (var i = 0; i < d.length; i += 4) sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    return sum / (d.length / 4);
+  }
+
+  function watchLight() {
+    if (!stream) return;
+    var luma = averageLuma();
+    darkCount = (luma !== null && luma < 55) ? darkCount + 1 : 0;
+    if (darkCount >= 3) {   // ~1,5 s d'image sombre
+      if (torchTrack && !torchOn && !torchManual) {
+        setTorch(true).then(function () { if (torchOn) status("Faible luminosité : lampe allumée."); });
+      } else if (!torchTrack && !darkHinted) {
+        darkHinted = true;
+        status("Luminosité faible : rapprochez le code d'une source de lumière.", "bad");
+      }
+    }
+    lightTimer = setTimeout(watchLight, 500);
+  }
+
+  function setupTorch() {
+    var track = stream && stream.getVideoTracks ? stream.getVideoTracks()[0] : null;
+    var check = function () {
+      var caps = track && track.getCapabilities ? track.getCapabilities() : {};
+      if (caps.torch) { torchTrack = track; btnTorch.hidden = false; }
+    };
+    check();
+    if (!torchTrack) setTimeout(check, 600);   // Chrome Android expose parfois les capacités avec un temps de retard
+    watchLight();
+  }
+
+  function resetTorch() {
+    clearTimeout(lightTimer);
+    torchTrack = null; torchOn = false; torchManual = false; darkCount = 0; darkHinted = false;
+    btnTorch.hidden = true;
+    btnTorch.textContent = "Allumer la lampe";
+    btnTorch.setAttribute("aria-pressed", "false");
+  }
+
+  btnTorch.addEventListener("click", function () { torchManual = true; setTorch(!torchOn); });
+
   async function startScan() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { cameraError(); return; }
     scannerBox.hidden = false;
@@ -523,6 +615,7 @@ td:first-child { font-family: var(--mono); }
         stream = await navigator.mediaDevices.getUserMedia(constraints);
         video.srcObject = stream;
         await video.play();
+        setupTorch();
         status("Placez le QR code ou le code-barres dans le cadre.");
         var tick = async function () {
           if (!stream) return;
@@ -545,6 +638,7 @@ td:first-child { font-family: var(--mono); }
         stream = await navigator.mediaDevices.getUserMedia(constraints);
         video.srcObject = stream;
         await video.play();
+        setupTorch();
         status("Placez le QR code ou le code-barres dans le cadre.");
         var work = document.createElement("canvas");
         var wctx = work.getContext("2d", { willReadFrequently: true });
@@ -574,6 +668,7 @@ td:first-child { font-family: var(--mono); }
 
   function stopScan() {
     clearTimeout(loopTimer);
+    resetTorch();
     if (zxingReader) { try { zxingReader.reset(); } catch (e) {} }
     if (stream && stream.getTracks) stream.getTracks().forEach(function (t) { t.stop(); });
     stream = null;
@@ -605,10 +700,10 @@ td:first-child { font-family: var(--mono); }
     }
   }
 
-  document.getElementById("btn-scan").addEventListener("click", function () { if (stream) stopScan(); startScan(); });
+  document.getElementById("btn-scan").addEventListener("click", function () { unlockAudio(); if (stream) stopScan(); startScan(); });
   document.getElementById("btn-stop").addEventListener("click", function () { stopScan(); status(""); });
   var filePhoto = document.getElementById("file-photo");
-  document.getElementById("btn-photo").addEventListener("click", function () { filePhoto.click(); });
+  document.getElementById("btn-photo").addEventListener("click", function () { unlockAudio(); filePhoto.click(); });
   filePhoto.addEventListener("change", function () {
     if (filePhoto.files && filePhoto.files[0]) scanPhoto(filePhoto.files[0]);
     filePhoto.value = "";
