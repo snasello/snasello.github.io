@@ -449,7 +449,7 @@ td:first-child { font-family: var(--mono); }
   var frame = scannerBox.querySelector(".frame");
   var ZXING_URL = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
   var NATIVE_FORMATS = ["qr_code", "data_matrix", "ean_13", "ean_8", "upc_a", "upc_e", "code_128", "itf"];
-  var nativeDetector = null, zxingReader = null, stream = null, loopTimer = null;
+  var nativeDetector = null, zxingReader = null, zxingHints = null, stream = null, loopTimer = null;
   var lastText = "", lastTime = 0;
 
   function status(msg, cls) { scanStatus.textContent = msg; scanStatus.className = "scan-status" + (cls ? " " + cls : ""); }
@@ -486,6 +486,7 @@ td:first-child { font-family: var(--mono); }
       Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E,
       Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.ITF]);
     hints.set(Z.DecodeHintType.TRY_HARDER, true);
+    zxingHints = hints;
     zxingReader = new Z.BrowserMultiFormatReader(hints, 250);
     return zxingReader;
   }
@@ -533,13 +534,37 @@ td:first-child { font-family: var(--mono); }
         };
         tick();
       } else {
+        // Safari / Firefox / Chrome desktop : pas de BarcodeDetector.
+        // Boucle maison plutôt que decodeFromConstraints de ZXing, qui ne décode rien sur le flux vidéo :
+        // on recadre sur la zone du viseur, on réduit l'image, puis on décode.
         status("Chargement du lecteur…");
-        var reader = await getZXingReader();
-        await reader.decodeFromConstraints(constraints, video, function (result) {
-          if (result) onCode(result.getText());
-        });
-        stream = video.srcObject;
+        var Z = await loadZXing();
+        await getZXingReader();
+        var mfr = new Z.MultiFormatReader();
+        mfr.setHints(zxingHints);
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        await video.play();
         status("Placez le QR code ou le code-barres dans le cadre.");
+        var work = document.createElement("canvas");
+        var wctx = work.getContext("2d", { willReadFrequently: true });
+        var zTick = function () {
+          if (!stream) return;
+          var vw = video.videoWidth, vh = video.videoHeight;
+          if (vw && vh) {
+            // zone un peu plus large que le cadre (.frame : inset 18% 12%)
+            var sw = vw * 0.88, sh = vh * 0.76;
+            var scale = Math.min(1, 800 / sw);
+            work.width = Math.round(sw * scale); work.height = Math.round(sh * scale);
+            wctx.drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, work.width, work.height);
+            try {
+              var bb = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(work)));
+              onCode(mfr.decode(bb).getText());
+            } catch (e) {}
+          }
+          loopTimer = setTimeout(zTick, 150);
+        };
+        zTick();
       }
     } catch (e) {
       if (e && e.message && !e.name) { status(e.message, "bad"); stopScan(); }
