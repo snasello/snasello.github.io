@@ -124,6 +124,7 @@ td:first-child { font-family: var(--mono); }
 .viewfinder video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .frame { position: absolute; inset: 18% 12%; border: 2px solid rgba(255,255,255,.85); border-radius: 4px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.35); }
 .frame.hit { border-color: #5CCB8E; }
+.frame.miss { border-color: #FF6B5E; }
 .scan-status { font-size: .9rem; margin: .6rem 0 0; min-height: 1.4em; }
 .scan-status.ok { color: var(--ok); }
 .scan-status.bad { color: var(--bad); }
@@ -505,18 +506,23 @@ td:first-child { font-family: var(--mono); }
       if (audioCtx.state === "suspended") audioCtx.resume();
     } catch (e) {}
   }
-  function beep() {
+  function tone(freq, start, dur) {
+    var t = audioCtx.currentTime + start, osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+    osc.type = "square";
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.15, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + dur + 0.01);
+  }
+  // ok : bip court et aigu ; sinon : deux bips graves
+  function beep(ok) {
     if (!audioCtx) return;
     try {
-      var t = audioCtx.currentTime, osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
-      osc.type = "square";
-      osc.frequency.value = 1800;
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.15, t + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
-      osc.connect(gain).connect(audioCtx.destination);
-      osc.start(t);
-      osc.stop(t + 0.13);
+      if (ok) tone(1800, 0, 0.12);
+      else { tone(330, 0, 0.14); tone(330, 0.2, 0.14); }
     } catch (e) {}
   }
 
@@ -528,10 +534,13 @@ td:first-child { font-family: var(--mono); }
     var current = input.value.replace(/\s+$/, "");
     input.value = (current ? current + "\n" : "") + line;
     render();
-    beep();
-    if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
-    frame.classList.add("hit"); setTimeout(function () { frame.classList.remove("hit"); }, 400);
-    status("Code lu : " + line, "ok");
+    var r = analyseLine(line);
+    var ok = !r.warning && r.blocks.length > 0 && r.blocks.every(function (b) { return b.valid; });
+    beep(ok);
+    if (navigator.vibrate) { try { navigator.vibrate(ok ? 60 : [80, 80, 80]); } catch (e) {} }
+    var cls = ok ? "hit" : "miss";
+    frame.classList.add(cls); setTimeout(function () { frame.classList.remove(cls); }, ok ? 400 : 700);
+    status((ok ? "Code valide : " : "Code non valide : ") + line, ok ? "ok" : "bad");
   }
 
   function cameraError(e) {
