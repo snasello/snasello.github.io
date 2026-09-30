@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vérificateur GS1 Digital Link</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #F1F4F7;
+  --surface: #FFFFFF;
+  --ink: #17263B;
+  --muted: #5B6B80;
+  --rule: #CAD3DD;
+  --accent: #2B56C9;
+  --ok: #1D7447;
+  --ok-bg: #E3F2E9;
+  --bad: #B0261D;
+  --bad-bg: #FBE7E5;
+  --warn: #8A5A00;
+  --warn-bg: #FDF1D8;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", "Consolas", "Menlo", monospace;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0F1722; --surface: #172230; --ink: #E4EAF2; --muted: #93A3B8;
+    --rule: #2C3A4D; --accent: #7EA2FF; --ok: #5CCB8E; --ok-bg: #133024;
+    --bad: #FF8A80; --bad-bg: #3A1B1A; --warn: #F0C067; --warn-bg: #362A12;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0F1722; --surface: #172230; --ink: #E4EAF2; --muted: #93A3B8;
+  --rule: #2C3A4D; --accent: #7EA2FF; --ok: #5CCB8E; --ok-bg: #133024;
+  --bad: #FF8A80; --bad-bg: #3A1B1A; --warn: #F0C067; --warn-bg: #362A12;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font-family: var(--sans); font-size: 16px; line-height: 1.5;
+}
+main { max-width: 860px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 .35rem; letter-spacing: -.01em; }
+.lead { color: var(--muted); margin: 0 0 2rem; max-width: 62ch; }
+h2 { font-size: 1.1rem; font-weight: 600; margin: 0 0 .75rem; }
+section.panel {
+  background: var(--surface); border: 1px solid var(--rule);
+  border-radius: 6px; padding: 1.25rem; margin-bottom: 1.5rem;
+}
+label { display: block; font-weight: 500; margin-bottom: .4rem; }
+.hint { color: var(--muted); font-size: .875rem; margin: .4rem 0 0; }
+textarea, input[type=text] {
+  width: 100%; font-family: var(--mono); font-size: .95rem;
+  color: var(--ink); background: var(--paper);
+  border: 1px solid var(--rule); border-radius: 4px; padding: .65rem .75rem;
+}
+textarea { min-height: 7.5rem; resize: vertical; }
+textarea:focus, input:focus, button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: .75rem; }
+button {
+  font: inherit; font-weight: 500; cursor: pointer; border-radius: 4px;
+  padding: .5rem .95rem; border: 1px solid var(--rule);
+  background: var(--surface); color: var(--ink);
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+:root[data-theme="dark"] button.primary { color: #0F1722; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.primary { color: #0F1722; } }
+
+.summary { font-weight: 500; margin: 0 0 1rem; }
+.result { border-top: 1px solid var(--rule); padding: 1.1rem 0; }
+.result:first-of-type { border-top: 0; padding-top: 0; }
+.source { font-family: var(--mono); font-size: .85rem; color: var(--muted); word-break: break-all; margin: 0 0 .6rem; }
+.keyhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem .9rem; margin-bottom: .6rem; }
+.keytype { font-weight: 600; }
+.keyval { font-family: var(--mono); }
+.badge { font-size: .85rem; font-weight: 600; padding: .1rem .55rem; border-radius: 3px; }
+.badge.ok { color: var(--ok); background: var(--ok-bg); }
+.badge.bad { color: var(--bad); background: var(--bad-bg); }
+.badge.warn { color: var(--warn); background: var(--warn-bg); }
+
+/* La bande de chiffres : l'élément central de la page */
+.strip-wrap { overflow-x: auto; padding-bottom: .25rem; }
+.strip { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(2.1rem, 1fr); width: max-content; min-width: 100%; font-family: var(--mono); }
+.strip .rowlabel { grid-row: auto; }
+.cell { text-align: center; border-left: 1px solid var(--rule); }
+.cell:first-child { border-left: 0; }
+.cell > div { padding: .15rem .3rem; }
+.cell .d { font-size: 1.35rem; font-weight: 600; padding: .35rem .3rem; }
+.cell .w { color: var(--muted); font-size: .8rem; }
+.cell .w3 { color: var(--accent); }
+.cell .p { font-size: .85rem; border-top: 1px dashed var(--rule); }
+.cell.labels { text-align: right; color: var(--muted); font-family: var(--sans); font-size: .8rem; padding-right: .5rem; }
+.cell.labels .d { font-size: .8rem; font-weight: 400; padding: .72rem .3rem; }
+.cell.check { border-left: 2px solid var(--ink); }
+.cell.check.ok .d { color: var(--ok); background: var(--ok-bg); }
+.cell.check.bad .d { color: var(--bad); background: var(--bad-bg); }
+.cell.ignored { opacity: .45; }
+.calc { font-family: var(--mono); font-size: .9rem; margin: .6rem 0 0; }
+.calc strong { font-weight: 600; }
+.note { font-size: .9rem; color: var(--muted); margin: .4rem 0 0; }
+.empty { color: var(--muted); margin: 0; }
+
+.calc-out { margin-top: .9rem; font-family: var(--mono); font-size: 1.5rem; font-weight: 600; letter-spacing: .04em; word-break: break-all; }
+.calc-out .cd { color: var(--ok); background: var(--ok-bg); padding: 0 .2rem; border-radius: 2px; }
+
+details { margin-top: 1rem; }
+summary { cursor: pointer; font-weight: 500; }
+details p, details li { font-size: .92rem; color: var(--muted); max-width: 70ch; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; font-size: .9rem; margin-top: .5rem; }
+th, td { text-align: left; padding: .3rem .8rem .3rem 0; border-bottom: 1px solid var(--rule); }
+th { font-weight: 600; }
+td:first-child { font-family: var(--mono); }
+.scanner { margin-top: 1rem; }
+.viewfinder { position: relative; max-width: 480px; aspect-ratio: 4 / 3; background: #000; border-radius: 4px; overflow: hidden; }
+.viewfinder video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.frame { position: absolute; inset: 18% 12%; border: 2px solid rgba(255,255,255,.85); border-radius: 4px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.35); }
+.frame.hit { border-color: #5CCB8E; }
+.scan-status { font-size: .9rem; margin: .6rem 0 0; min-height: 1.4em; }
+.scan-status.ok { color: var(--ok); }
+.scan-status.bad { color: var(--bad); }
+@media (prefers-reduced-motion: no-preference) {
+  .frame { transition: border-color .15s; }
+  .cell.check .d { transition: background-color .2s; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>Vérificateur GS1 Digital Link</h1>
+  <p class="lead">Collez des liens Digital Link ou des clés GS1 (GTIN, SSCC, GLN…). La page recalcule le chiffre de contrôle de chaque clé et montre le détail du calcul. Tout se passe dans votre navigateur, rien n'est envoyé.</p>
+
+  <section class="panel" aria-labelledby="t-check">
+    <h2 id="t-check">Vérifier des liens ou des clés</h2>
+    <label for="input">Un lien ou une clé par ligne</label>
+    <textarea id="input" spellcheck="false" autocomplete="off" placeholder="https://id.gs1.org/01/09520123456788/10/LOT123/21/SN456"></textarea>
+    <p class="hint">Les résultats se mettent à jour pendant la saisie. Un code scanné (QR, DataMatrix, EAN, GS1-128) est ajouté comme nouvelle ligne.</p>
+    <div class="actions">
+      <button type="button" class="primary" id="btn-scan">Scanner avec la caméra</button>
+      <button type="button" id="btn-photo">Scanner une photo</button>
+      <input type="file" id="file-photo" accept="image/*" capture="environment" hidden>
+      <button type="button" id="btn-example">Charger des exemples</button>
+      <button type="button" id="btn-clear">Effacer</button>
+    </div>
+    <div id="scanner" class="scanner" hidden>
+      <div class="viewfinder">
+        <video id="video" playsinline muted></video>
+        <div class="frame" aria-hidden="true"></div>
+      </div>
+      <div class="actions">
+        <button type="button" id="btn-stop">Arrêter le scan</button>
+      </div>
+    </div>
+    <p id="scan-status" class="scan-status" role="status"></p>
+  </section>
+
+  <section class="panel" aria-labelledby="t-results" aria-live="polite">
+    <h2 id="t-results">Résultats</h2>
+    <div id="results"><p class="empty">Aucun lien à vérifier pour l'instant.</p></div>
+  </section>
+
+  <section class="panel" aria-labelledby="t-calc">
+    <h2 id="t-calc">Calculer un chiffre de contrôle</h2>
+    <label for="calc-in">Chiffres de la clé, sans le dernier chiffre</label>
+    <input type="text" id="calc-in" inputmode="numeric" autocomplete="off" placeholder="0952012345678">
+    <div id="calc-res"></div>
+  </section>
+
+  <details>
+    <summary>Comment le chiffre est calculé</summary>
+    <ol>
+      <li>On retire le dernier chiffre de la clé : c'est le chiffre de contrôle à vérifier.</li>
+      <li>En partant de la droite, on multiplie les chiffres restants alternativement par 3 et par 1 (le plus à droite par 3).</li>
+      <li>On additionne les produits pour obtenir la somme S.</li>
+      <li>Le chiffre de contrôle vaut (10 − (S mod 10)) mod 10.</li>
+    </ol>
+    <p>Clés contrôlées dans un Digital Link :</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>AI</th><th>Clé</th><th>Chiffres contrôlés</th></tr></thead>
+        <tbody id="ai-table"></tbody>
+      </table>
+    </div>
+    <p>Le lot (10), le numéro de série (21) et les dates n'ont pas de chiffre de contrôle. Un chiffre valide prouve que la clé est bien formée, pas qu'elle existe.</p>
+  </details>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var AIS = {
+    "00":   { name: "SSCC",  len: 18 },
+    "01":   { name: "GTIN",  len: 14 },
+    "253":  { name: "GDTI",  len: 13, partial: true },
+    "255":  { name: "GCN",   len: 13, partial: true },
+    "402":  { name: "GSIN",  len: 17 },
+    "414":  { name: "GLN",   len: 13 },
+    "417":  { name: "PGLN",  len: 13 },
+    "8003": { name: "GRAI",  len: 14, partial: true },
+    "8006": { name: "ITIP",  len: 14, partial: true },
+    "8017": { name: "GSRN prestataire",   len: 18 },
+    "8018": { name: "GSRN bénéficiaire",  len: 18 }
+  };
+  var ALIASES = { gtin: "01", sscc: "00", gln: "414", gdti: "253", gcn: "255",
+                  gsin: "402", grai: "8003", itip: "8006", gsrnp: "8017", gsrn: "8018" };
+  var BARE_TYPES = { 8: "GTIN-8", 12: "GTIN-12", 13: "GTIN-13 / GLN", 14: "GTIN-14", 17: "GSIN", 18: "SSCC / GSRN" };
+
+  var EXAMPLES = [
+    "https://id.gs1.org/01/09520123456788/10/LOT123/21/SN456",
+    "https://id.gs1.org/01/09520123456787/21/ABC",
+    "https://example.com/00/095201234567890122",
+    "3017620422003"
+  ].join("\n");
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Calcul détaillé : renvoie poids, produits, somme et chiffre attendu
+  function compute(body) {
+    var weights = [], products = [], sum = 0, w = 3;
+    for (var i = body.length - 1; i >= 0; i--) {
+      var d = body.charCodeAt(i) - 48;
+      weights[i] = w;
+      products[i] = d * w;
+      sum += d * w;
+      w = 4 - w;
+    }
+    return { weights: weights, products: products, sum: sum, check: (10 - (sum % 10)) % 10 };
+  }
+
+  function checkKey(key) {
+    var body = key.slice(0, -1);
+    var found = key.charCodeAt(key.length - 1) - 48;
+    var c = compute(body);
+    c.body = body; c.found = found; c.valid = (found === c.check);
+    return c;
+  }
+
+  function stripHTML(key, c, extra) {
+    var h = '<div class="strip-wrap"><div class="strip" role="img" aria-label="Détail du calcul">';
+    h += '<div class="cell labels"><div class="d">Chiffre</div><div class="w">Poids</div><div class="p">Produit</div></div>';
+    for (var i = 0; i < c.body.length; i++) {
+      h += '<div class="cell"><div class="d">' + c.body[i] + '</div>' +
+           '<div class="w' + (c.weights[i] === 3 ? ' w3' : '') + '">×' + c.weights[i] + '</div>' +
+           '<div class="p">' + c.products[i] + '</div></div>';
+    }
+    h += '<div class="cell check ' + (c.valid ? 'ok' : 'bad') + '"><div class="d">' + c.found + '</div>' +
+         '<div class="w">contrôle</div><div class="p">' + (c.valid ? '✓' : 'attendu ' + c.check) + '</div></div>';
+    if (extra) {
+      for (var j = 0; j < extra.length; j++) {
+        h += '<div class="cell ignored"><div class="d">' + esc(extra[j]) + '</div><div class="w">&nbsp;</div><div class="p">&nbsp;</div></div>';
+      }
+    }
+    h += '</div></div>';
+    h += '<p class="calc">S = ' + c.products.join(' + ') + ' = <strong>' + c.sum + '</strong> → (10 − ' + (c.sum % 10) + ') mod 10 = <strong>' + c.check + '</strong></p>';
+    return h;
+  }
+
+  function keyBlock(typeLabel, ai, rawValue, key, extra, note) {
+    var c = checkKey(key);
+    var h = '<div class="keyhead"><span class="keytype">' + esc(typeLabel) + (ai ? ' (AI ' + ai + ')' : '') + '</span>' +
+            '<span class="keyval">' + esc(rawValue) + '</span>' +
+            (c.valid ? '<span class="badge ok">Valide</span>'
+                     : '<span class="badge bad">Invalide : chiffre attendu ' + c.check + '</span>') + '</div>';
+    h += stripHTML(key, c, extra);
+    if (note) h += '<p class="note">' + note + '</p>';
+    return { html: h, valid: c.valid };
+  }
+
+  function errorBlock(typeLabel, ai, rawValue, msg) {
+    return { html: '<div class="keyhead"><span class="keytype">' + esc(typeLabel) + (ai ? ' (AI ' + ai + ')' : '') + '</span>' +
+      '<span class="keyval">' + esc(rawValue) + '</span><span class="badge bad">' + esc(msg) + '</span></div>', valid: false };
+  }
+
+  function analyseLine(line) {
+    var out = { source: line, blocks: [], warning: null };
+
+    // Clé seule (chiffres)
+    var bare = line.replace(/\s+/g, "");
+    if (/^\d+$/.test(bare)) {
+      if (bare.length < 2) { out.warning = "Clé trop courte."; return out; }
+      var t = BARE_TYPES[bare.length] || ("Clé de " + bare.length + " chiffres");
+      out.blocks.push(keyBlock(t, null, bare, bare, null,
+        BARE_TYPES[bare.length] ? null : "Longueur inhabituelle pour une clé GS1 : vérifiez qu'il ne manque pas de chiffre."));
+      return out;
+    }
+
+    // Lien Digital Link
+    var url;
+    try {
+      url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(line) ? line : "https://" + line);
+    } catch (e) {
+      out.warning = "Ce n'est ni un lien valide ni une clé numérique.";
+      return out;
+    }
+    var segs = url.pathname.split("/").filter(function (s) { return s !== ""; }).map(function (s) {
+      try { return decodeURIComponent(s); } catch (e) { return s; }
+    });
+
+    for (var i = 0; i < segs.length - 1; i++) {
+      var ai = segs[i].toLowerCase();
+      if (ALIASES[ai]) ai = ALIASES[ai];
+      var def = AIS[ai];
+      if (!def) continue;
+      var value = segs[i + 1];
+      var v = value;
+      if (ai === "01" && /^(\d{8}|\d{12}|\d{13})$/.test(v)) v = v.padStart(14, "0");
+      var head = v.slice(0, def.len);
+      if (v.length < def.len || !/^\d+$/.test(head)) {
+        out.blocks.push(errorBlock(def.name, ai, value, def.len + " chiffres attendus"));
+      } else {
+        var extra = def.partial && v.length > def.len ? [v.slice(def.len)] : null;
+        var note = null;
+        if (ai === "01" && v !== value) note = "Complété à 14 chiffres par des zéros à gauche.";
+        if (extra) note = "Seuls les " + def.len + " premiers chiffres portent le contrôle ; la suite est un numéro de série libre.";
+        if (!def.partial && v.length > def.len) {
+          out.blocks.push(errorBlock(def.name, ai, value, def.len + " chiffres attendus, " + v.length + " trouvés"));
+        } else {
+          out.blocks.push(keyBlock(def.name, ai, value, head, extra, note));
+        }
+      }
+      i++;
+    }
+    if (!out.blocks.length) {
+      out.warning = "Aucune clé GS1 avec chiffre de contrôle trouvée dans ce lien (lien compressé ou AI non pris en charge ?).";
+    }
+    return out;
+  }
+
+  var input = document.getElementById("input");
+  var results = document.getElementById("results");
+
+  function render() {
+    var lines = input.value.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(Boolean);
+    if (!lines.length) {
+      results.innerHTML = '<p class="empty">Aucun lien à vérifier pour l\'instant.</p>';
+      return;
+    }
+    var nOk = 0, nBad = 0, nWarn = 0, html = "";
+    lines.forEach(function (line) {
+      var r = analyseLine(line);
+      html += '<div class="result"><p class="source">' + esc(line) + '</p>';
+      if (r.warning) { nWarn++; html += '<span class="badge warn">' + esc(r.warning) + '</span>'; }
+      r.blocks.forEach(function (b) { b.valid ? nOk++ : nBad++; html += b.html; });
+      html += '</div>';
+    });
+    var parts = [nOk + " clé" + (nOk > 1 ? "s" : "") + " valide" + (nOk > 1 ? "s" : ""),
+                 nBad + " invalide" + (nBad > 1 ? "s" : "")];
+    if (nWarn) parts.push(nWarn + " ligne" + (nWarn > 1 ? "s" : "") + " sans clé exploitable");
+    results.innerHTML = '<p class="summary">' + parts.join(", ") + '.</p>' + html;
+  }
+
+  var timer;
+  input.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(render, 150); });
+  document.getElementById("btn-example").addEventListener("click", function () { input.value = EXAMPLES; render(); input.focus(); });
+  document.getElementById("btn-clear").addEventListener("click", function () { input.value = ""; render(); input.focus(); });
+
+  // Calculateur
+  var calcIn = document.getElementById("calc-in");
+  var calcRes = document.getElementById("calc-res");
+  calcIn.addEventListener("input", function () {
+    var v = calcIn.value.replace(/\s+/g, "");
+    if (!v) { calcRes.innerHTML = ""; return; }
+    if (!/^\d+$/.test(v)) { calcRes.innerHTML = '<p class="note">Saisissez uniquement des chiffres.</p>'; return; }
+    var c = compute(v);
+    calcRes.innerHTML = '<div class="calc-out" aria-label="Clé complète">' + v + '<span class="cd">' + c.check + '</span></div>' +
+      '<p class="calc">S = ' + c.products.join(' + ') + ' = <strong>' + c.sum + '</strong> → chiffre de contrôle <strong>' + c.check + '</strong></p>';
+  });
+
+  // ---------- Conversion d'une chaîne GS1 (DataMatrix, GS1-128) en Digital Link ----------
+  var GS = "\u001d";
+  // Longueurs fixes prédéfinies par préfixe de 2 chiffres (spécifications générales GS1)
+  var FIXED = { "00": 18, "01": 14, "02": 14, "03": 14, "04": 16, "11": 6, "12": 6, "13": 6,
+                "14": 6, "15": 6, "16": 6, "17": 6, "18": 6, "19": 6, "20": 2,
+                "31": 6, "32": 6, "33": 6, "34": 6, "35": 6, "36": 6, "41": 13 };
+  function aiLength(s) {
+    var p = +s.slice(0, 2);
+    if (p <= 22 || p === 30 || p === 37 || p >= 90) return 2;
+    if ((p >= 23 && p <= 25) || (p >= 40 && p <= 42)) return 3;
+    return 4;
+  }
+  function parseElementString(raw) {
+    var s = raw.replace(/^\][A-Za-z]\d/, "");            // identifiant de symbologie ]d2, ]C1, ]Q3…
+    var list = [], m;
+    if (/^\(\d{2,4}\)/.test(s)) {                           // forme lisible (01)…(10)…
+      var re = /\((\d{2,4})\)([^(]*)/g;
+      while ((m = re.exec(s))) list.push([m[1], m[2].trim()]);
+      return list.length ? list : null;
+    }
+    s = s.replace(/^\u001d+/, "");
+    if (!/^\d{2}/.test(s)) return null;
+    var i = 0, guard = 0;
+    while (i < s.length && guard++ < 40) {
+      if (s[i] === GS) { i++; continue; }
+      var n = aiLength(s.slice(i));
+      var ai = s.slice(i, i + n);
+      if (!/^\d+$/.test(ai)) return null;
+      i += n;
+      var fixed = FIXED[ai.slice(0, 2)];
+      var val;
+      if (fixed) { val = s.slice(i, i + fixed); i += fixed; }
+      else { var e = s.indexOf(GS, i); if (e < 0) e = s.length; val = s.slice(i, e); i = e; }
+      list.push([ai, val]);
+    }
+    return list.length ? list : null;
+  }
+  var PRIMARY = ["01", "00", "414", "417", "8003", "8004", "8006", "8017", "8018", "253", "255", "402"];
+  var QUALIFIERS = ["22", "10", "21", "235", "254", "7040"];
+  function toDigitalLink(pairs) {
+    var map = {};
+    pairs.forEach(function (p) { if (!(p[0] in map)) map[p[0]] = p[1]; });
+    var prim = PRIMARY.filter(function (a) { return a in map; })[0];
+    if (!prim) return null;
+    var path = "/" + prim + "/" + encodeURIComponent(map[prim]);
+    var used = {}; used[prim] = 1;
+    QUALIFIERS.forEach(function (q) {
+      if (q in map) { path += "/" + q + "/" + encodeURIComponent(map[q]); used[q] = 1; }
+    });
+    var query = Object.keys(map).filter(function (k) { return !used[k]; })
+      .map(function (k) { return k + "=" + encodeURIComponent(map[k]); }).join("&");
+    return "https://id.gs1.org" + path + (query ? "?" + query : "");
+  }
+  // Transforme le texte lu en ligne exploitable par le vérificateur
+  function normaliseScan(text) {
+    var t = text.trim();
+    if (/^https?:\/\//i.test(t)) return t;
+    if (/^\d{8}$|^\d{12,14}$|^\d{18}$/.test(t)) return t;          // EAN/UPC/ITF-14/SSCC seul
+    var pairs = parseElementString(t);
+    if (pairs) { var dl = toDigitalLink(pairs); if (dl) return dl; }
+    return t;
+  }
+
+  // ---------- Scan ----------
+  var scanStatus = document.getElementById("scan-status");
+  var scannerBox = document.getElementById("scanner");
+  var video = document.getElementById("video");
+  var frame = scannerBox.querySelector(".frame");
+  var ZXING_URL = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
+  var NATIVE_FORMATS = ["qr_code", "data_matrix", "ean_13", "ean_8", "upc_a", "upc_e", "code_128", "itf"];
+  var nativeDetector = null, zxingReader = null, stream = null, loopTimer = null;
+  var lastText = "", lastTime = 0;
+
+  function status(msg, cls) { scanStatus.textContent = msg; scanStatus.className = "scan-status" + (cls ? " " + cls : ""); }
+
+  async function getNativeDetector() {
+    if (nativeDetector !== null) return nativeDetector;
+    nativeDetector = false;
+    try {
+      if ("BarcodeDetector" in window) {
+        var supported = await window.BarcodeDetector.getSupportedFormats();
+        var formats = NATIVE_FORMATS.filter(function (f) { return supported.indexOf(f) >= 0; });
+        if (formats.indexOf("qr_code") >= 0 && formats.indexOf("data_matrix") >= 0) {
+          nativeDetector = new window.BarcodeDetector({ formats: formats });
+        }
+      }
+    } catch (e) { nativeDetector = false; }
+    return nativeDetector;
+  }
+  function loadZXing() {
+    if (window.ZXing) return Promise.resolve(window.ZXing);
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = ZXING_URL;
+      s.onload = function () { window.ZXing ? resolve(window.ZXing) : reject(new Error("ZXing")); };
+      s.onerror = function () { reject(new Error("Chargement du lecteur impossible (connexion requise la première fois).")); };
+      document.head.appendChild(s);
+    });
+  }
+  async function getZXingReader() {
+    if (zxingReader) return zxingReader;
+    var Z = await loadZXing();
+    var hints = new Map();
+    hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.QR_CODE, Z.BarcodeFormat.DATA_MATRIX,
+      Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E,
+      Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.ITF]);
+    hints.set(Z.DecodeHintType.TRY_HARDER, true);
+    zxingReader = new Z.BrowserMultiFormatReader(hints, 250);
+    return zxingReader;
+  }
+
+  function onCode(text) {
+    var now = Date.now();
+    if (text === lastText && now - lastTime < 2500) return;   // évite les doublons pendant le scan continu
+    lastText = text; lastTime = now;
+    var line = normaliseScan(text);
+    var current = input.value.replace(/\s+$/, "");
+    input.value = (current ? current + "\n" : "") + line;
+    render();
+    if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
+    frame.classList.add("hit"); setTimeout(function () { frame.classList.remove("hit"); }, 400);
+    status("Code lu : " + line, "ok");
+  }
+
+  function cameraError(e) {
+    var msg = "La caméra n'est pas accessible";
+    if (e && e.name === "NotAllowedError") msg = "Accès à la caméra refusé";
+    else if (e && e.name === "NotFoundError") msg = "Aucune caméra détectée";
+    status(msg + ". Utilisez « Scanner une photo », ou ouvrez la page dans un navigateur en HTTPS.", "bad");
+    stopScan();
+  }
+
+  async function startScan() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { cameraError(); return; }
+    scannerBox.hidden = false;
+    status("Ouverture de la caméra…");
+    var constraints = { video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false };
+    var det = await getNativeDetector();
+    try {
+      if (det) {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        await video.play();
+        status("Placez le QR code ou le code-barres dans le cadre.");
+        var tick = async function () {
+          if (!stream) return;
+          try {
+            var codes = await det.detect(video);
+            if (codes.length) onCode(codes[0].rawValue);
+          } catch (e) {}
+          loopTimer = setTimeout(tick, 200);
+        };
+        tick();
+      } else {
+        status("Chargement du lecteur…");
+        var reader = await getZXingReader();
+        await reader.decodeFromConstraints(constraints, video, function (result) {
+          if (result) onCode(result.getText());
+        });
+        stream = video.srcObject;
+        status("Placez le QR code ou le code-barres dans le cadre.");
+      }
+    } catch (e) {
+      if (e && e.message && !e.name) { status(e.message, "bad"); stopScan(); }
+      else cameraError(e);
+    }
+  }
+
+  function stopScan() {
+    clearTimeout(loopTimer);
+    if (zxingReader) { try { zxingReader.reset(); } catch (e) {} }
+    if (stream && stream.getTracks) stream.getTracks().forEach(function (t) { t.stop(); });
+    stream = null;
+    video.srcObject = null;
+    scannerBox.hidden = true;
+  }
+
+  async function scanPhoto(file) {
+    status("Analyse de la photo…");
+    try {
+      var det = await getNativeDetector();
+      var text = null;
+      if (det) {
+        var bmp = await createImageBitmap(file);
+        var codes = await det.detect(bmp);
+        if (codes.length) text = codes[0].rawValue;
+      }
+      if (!text) {
+        var reader = await getZXingReader();
+        var url = URL.createObjectURL(file);
+        try { text = (await reader.decodeFromImageUrl(url)).getText(); }
+        catch (e) { text = null; }
+        finally { URL.revokeObjectURL(url); }
+      }
+      if (text) { lastText = ""; onCode(text); }
+      else status("Aucun code trouvé sur la photo. Essayez une image plus nette, avec le code bien cadré.", "bad");
+    } catch (e) {
+      status((e && e.message) || "Lecture de la photo impossible.", "bad");
+    }
+  }
+
+  document.getElementById("btn-scan").addEventListener("click", function () { if (stream) stopScan(); startScan(); });
+  document.getElementById("btn-stop").addEventListener("click", function () { stopScan(); status(""); });
+  var filePhoto = document.getElementById("file-photo");
+  document.getElementById("btn-photo").addEventListener("click", function () { filePhoto.click(); });
+  filePhoto.addEventListener("change", function () {
+    if (filePhoto.files && filePhoto.files[0]) scanPhoto(filePhoto.files[0]);
+    filePhoto.value = "";
+  });
+  window.addEventListener("pagehide", stopScan);
+
+  // Tableau des AI
+  var tb = document.getElementById("ai-table");
+  Object.keys(AIS).forEach(function (k) {
+    var d = AIS[k];
+    tb.insertAdjacentHTML("beforeend", "<tr><td>" + k + "</td><td>" + esc(d.name) + "</td><td>" + d.len + (d.partial ? " premiers" : "") + "</td></tr>");
+  });
+})();
+</script>
+</body>
+</html>
