@@ -110,6 +110,12 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 
 .calc-out { margin-top: .9rem; font-family: var(--mono); font-size: 1.5rem; font-weight: 600; letter-spacing: .04em; word-break: break-all; }
 .calc-out .cd { color: var(--ok); background: var(--ok-bg); padding: 0 .2rem; border-radius: 2px; }
+.calc-out .cd-free { color: var(--muted); padding: 0 .2rem; }
+select {
+  font: inherit; color: var(--ink); background: var(--paper);
+  border: 1px solid var(--rule); border-radius: 4px; padding: .5rem .6rem; max-width: 100%;
+}
+select:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 details { margin-top: 1rem; }
 summary { cursor: pointer; font-weight: 500; }
@@ -137,7 +143,7 @@ td:first-child { font-family: var(--mono); }
 <body>
 <main>
   <h1>Vérificateur GS1 Digital Link</h1>
-  <p class="lead">Collez des liens Digital Link ou des clés GS1 (GTIN, SSCC, GLN…). La page recalcule le chiffre de contrôle de chaque clé et montre le détail du calcul. Tout se passe dans votre navigateur, rien n'est envoyé.</p>
+  <p class="lead">Collez des liens Digital Link ou des clés GS1 (GTIN, SSCC, GLN…). Les codes internes à 16 chiffres (contrôle modulo 9) sont aussi vérifiés. La page recalcule le chiffre de contrôle de chaque clé et montre le détail du calcul. Tout se passe dans votre navigateur, rien n'est envoyé.</p>
 
   <section class="panel" aria-labelledby="t-check">
     <h2 id="t-check">Vérifier des liens ou des clés</h2>
@@ -171,7 +177,12 @@ td:first-child { font-family: var(--mono); }
 
   <section class="panel" aria-labelledby="t-calc">
     <h2 id="t-calc">Calculer un chiffre de contrôle</h2>
-    <label for="calc-in">Chiffres de la clé, sans le dernier chiffre</label>
+    <label for="calc-mode">Type de clé</label>
+    <select id="calc-mode">
+      <option value="gs1">Clé GS1 (modulo 10)</option>
+      <option value="mod9">Code interne 16 chiffres (modulo 9)</option>
+    </select>
+    <label for="calc-in" id="calc-label" style="margin-top:.75rem">Chiffres de la clé, sans le dernier chiffre</label>
     <input type="text" id="calc-in" inputmode="numeric" autocomplete="off" placeholder="0952012345678">
     <div id="calc-res"></div>
   </section>
@@ -192,6 +203,13 @@ td:first-child { font-family: var(--mono); }
       </table>
     </div>
     <p>Le lot (10), le numéro de série (21) et les dates n'ont pas de chiffre de contrôle. Un chiffre valide prouve que la clé est bien formée, pas qu'elle existe.</p>
+    <p>Codes internes à 16 chiffres (Code 128 sans FNC1) :</p>
+    <ol>
+      <li>On prend les 14 premiers chiffres.</li>
+      <li>En partant de la droite, on les multiplie par 1, 2, 3… jusqu'à 14.</li>
+      <li>On additionne les produits pour obtenir la somme S.</li>
+      <li>Le 15e chiffre doit valoir S mod 9 (donc jamais 9). Le 16e chiffre n'est pas contrôlé.</li>
+    </ol>
   </details>
 </main>
 
@@ -220,7 +238,9 @@ td:first-child { font-family: var(--mono); }
     "https://id.gs1.org/01/09520123456788/10/LOT123/21/SN456",
     "https://id.gs1.org/01/09520123456787/21/ABC",
     "https://example.com/00/095201234567890122",
-    "3017620422003"
+    "3017620422003",
+    "1234567890123121",
+    "1234567890123151"
   ].join("\n");
 
   function esc(s) {
@@ -250,12 +270,34 @@ td:first-child { font-family: var(--mono); }
     return c;
   }
 
+  // Code interne 16 chiffres : les 14 premiers chiffres, pondérés 1, 2, 3… en partant de la droite,
+  // somme modulo 9 = 15e chiffre. Le 16e chiffre n'est pas couvert par le contrôle.
+  function computeMod9(body) {
+    var weights = [], products = [], sum = 0;
+    for (var i = body.length - 1, w = 1; i >= 0; i--, w++) {
+      var d = body.charCodeAt(i) - 48;
+      weights[i] = w;
+      products[i] = d * w;
+      sum += d * w;
+    }
+    return { weights: weights, products: products, sum: sum, check: sum % 9, scheme: "mod9" };
+  }
+
+  function checkKeyMod9(key) {
+    var body = key.slice(0, -1);
+    var found = key.charCodeAt(key.length - 1) - 48;
+    var c = computeMod9(body);
+    c.body = body; c.found = found; c.valid = (found === c.check);
+    return c;
+  }
+
   function stripHTML(key, c, extra) {
+    var mod9 = c.scheme === "mod9";
     var h = '<div class="strip-wrap"><div class="strip" role="img" aria-label="Détail du calcul">';
     h += '<div class="cell labels"><div class="d">Chiffre</div><div class="w">Poids</div><div class="p">Produit</div></div>';
     for (var i = 0; i < c.body.length; i++) {
       h += '<div class="cell"><div class="d">' + c.body[i] + '</div>' +
-           '<div class="w' + (c.weights[i] === 3 ? ' w3' : '') + '">×' + c.weights[i] + '</div>' +
+           '<div class="w' + (!mod9 && c.weights[i] === 3 ? ' w3' : '') + '">×' + c.weights[i] + '</div>' +
            '<div class="p">' + c.products[i] + '</div></div>';
     }
     h += '<div class="cell check ' + (c.valid ? 'ok' : 'bad') + '"><div class="d">' + c.found + '</div>' +
@@ -266,12 +308,13 @@ td:first-child { font-family: var(--mono); }
       }
     }
     h += '</div></div>';
-    h += '<p class="calc">S = ' + c.products.join(' + ') + ' = <strong>' + c.sum + '</strong> → (10 − ' + (c.sum % 10) + ') mod 10 = <strong>' + c.check + '</strong></p>';
+    h += '<p class="calc">S = ' + c.products.join(' + ') + ' = <strong>' + c.sum + '</strong> → ' +
+         (mod9 ? c.sum + ' mod 9' : '(10 − ' + (c.sum % 10) + ') mod 10') + ' = <strong>' + c.check + '</strong></p>';
     return h;
   }
 
-  function keyBlock(typeLabel, ai, rawValue, key, extra, note) {
-    var c = checkKey(key);
+  function keyBlock(typeLabel, ai, rawValue, key, extra, note, scheme) {
+    var c = scheme === "mod9" ? checkKeyMod9(key) : checkKey(key);
     var h = '<div class="keyhead"><span class="keytype">' + esc(typeLabel) + (ai ? ' (AI ' + ai + ')' : '') + '</span>' +
             '<span class="keyval">' + esc(rawValue) + '</span>' +
             (c.valid ? '<span class="badge ok">Valide</span>'
@@ -293,9 +336,19 @@ td:first-child { font-family: var(--mono); }
     var bare = line.replace(/\s+/g, "");
     if (/^\d+$/.test(bare)) {
       if (bare.length < 2) { out.warning = "Clé trop courte."; return out; }
-      var t = BARE_TYPES[bare.length] || ("Clé de " + bare.length + " chiffres");
-      out.blocks.push(keyBlock(t, null, bare, bare, null,
-        BARE_TYPES[bare.length] ? null : "Longueur inhabituelle pour une clé GS1 : vérifiez qu'il ne manque pas de chiffre."));
+      if (bare.length === 16) {
+        out.blocks.push(keyBlock("Code interne 16 chiffres", null, bare, bare.slice(0, 15), [bare.slice(15)],
+          "Contrôle modulo 9 sur les 14 premiers chiffres ; le 16e chiffre n'est pas contrôlé.", "mod9"));
+        return out;
+      }
+      if (!BARE_TYPES[bare.length]) {
+        // Code-barres Code 128 sans FNC1 : code interne, pas une clé GS1
+        out.nonGs1 = true;
+        out.warning = "Code de " + bare.length + " chiffres : ce n'est pas une clé GS1 (code interne ?), " +
+          "il n'a pas de chiffre de contrôle connu. Sont vérifiables : GTIN (8, 12, 13, 14), GSIN (17), SSCC/GSRN (18) et codes internes à 16 chiffres.";
+        return out;
+      }
+      out.blocks.push(keyBlock(BARE_TYPES[bare.length], null, bare, bare, null, null));
       return out;
     }
 
@@ -372,13 +425,26 @@ td:first-child { font-family: var(--mono); }
   // Calculateur
   var calcIn = document.getElementById("calc-in");
   var calcRes = document.getElementById("calc-res");
-  calcIn.addEventListener("input", function () {
+  var calcMode = document.getElementById("calc-mode");
+  var calcLabel = document.getElementById("calc-label");
+  function renderCalc() {
+    var mod9 = calcMode.value === "mod9";
     var v = calcIn.value.replace(/\s+/g, "");
     if (!v) { calcRes.innerHTML = ""; return; }
     if (!/^\d+$/.test(v)) { calcRes.innerHTML = '<p class="note">Saisissez uniquement des chiffres.</p>'; return; }
-    var c = compute(v);
-    calcRes.innerHTML = '<div class="calc-out" aria-label="Clé complète">' + v + '<span class="cd">' + c.check + '</span></div>' +
-      '<p class="calc">S = ' + c.products.join(' + ') + ' = <strong>' + c.sum + '</strong> → chiffre de contrôle <strong>' + c.check + '</strong></p>';
+    if (mod9 && v.length !== 14) { calcRes.innerHTML = '<p class="note">14 chiffres attendus (' + v.length + ' saisis).</p>'; return; }
+    var c = mod9 ? computeMod9(v) : compute(v);
+    calcRes.innerHTML = '<div class="calc-out" aria-label="Clé complète">' + v + '<span class="cd">' + c.check + '</span>' +
+      (mod9 ? '<span class="cd-free" title="16e chiffre, non contrôlé">?</span>' : '') + '</div>' +
+      '<p class="calc">S = ' + c.products.join(' + ') + ' = <strong>' + c.sum + '</strong> → chiffre de contrôle <strong>' + c.check + '</strong></p>' +
+      (mod9 ? '<p class="note">Le 16e chiffre est libre : il n\'entre pas dans le contrôle.</p>' : '');
+  }
+  calcIn.addEventListener("input", renderCalc);
+  calcMode.addEventListener("change", function () {
+    var mod9 = calcMode.value === "mod9";
+    calcLabel.textContent = mod9 ? "Les 14 premiers chiffres du code" : "Chiffres de la clé, sans le dernier chiffre";
+    calcIn.placeholder = mod9 ? "12345678901231" : "0952012345678";
+    renderCalc();
   });
 
   // ---------- Conversion d'une chaîne GS1 (DataMatrix, GS1-128) en Digital Link ----------
@@ -412,7 +478,13 @@ td:first-child { font-family: var(--mono); }
       i += n;
       var fixed = FIXED[ai.slice(0, 2)];
       var val;
-      if (fixed) { val = s.slice(i, i + fixed); i += fixed; }
+      if (fixed) {
+        val = s.slice(i, i + fixed); i += fixed;
+        // Valeur tronquée ou non numérique : ce n'est pas une chaîne GS1 (ex. code interne 16 chiffres)
+        if (val.length < fixed || !/^\d+$/.test(val)) return null;
+        // Dates AI 11 à 17 (AAMMJJ) : mois 01-12, jour 00-31
+        if (/^1[1-7]$/.test(ai) && (+val.slice(2, 4) < 1 || +val.slice(2, 4) > 12 || +val.slice(4, 6) > 31)) return null;
+      }
       else { var e = s.indexOf(GS, i); if (e < 0) e = s.length; val = s.slice(i, e); i = e; }
       list.push([ai, val]);
     }
@@ -540,7 +612,7 @@ td:first-child { font-family: var(--mono); }
     if (navigator.vibrate) { try { navigator.vibrate(ok ? 60 : [80, 80, 80]); } catch (e) {} }
     var cls = ok ? "hit" : "miss";
     frame.classList.add(cls); setTimeout(function () { frame.classList.remove(cls); }, ok ? 400 : 700);
-    status((ok ? "Code valide : " : "Code non valide : ") + line, ok ? "ok" : "bad");
+    status((ok ? "Code valide : " : r.nonGs1 ? "Code non GS1, rien à contrôler : " : "Code non valide : ") + line, ok ? "ok" : "bad");
   }
 
   function cameraError(e) {
@@ -685,24 +757,43 @@ td:first-child { font-family: var(--mono); }
     scannerBox.hidden = true;
   }
 
+  // ZXing ne trouve rien sur une photo pleine résolution : on essaie plusieurs tailles réduites,
+  // séparément pour les codes 2D et 1D afin de lire le QR code ET le code-barres d'une étiquette
+  async function zxingDecodeAll(bmp) {
+    var Z = await loadZXing();
+    var groups = [[Z.BarcodeFormat.QR_CODE, Z.BarcodeFormat.DATA_MATRIX],
+                  [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A, Z.BarcodeFormat.UPC_E,
+                   Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.ITF]];
+    var found = [];
+    groups.forEach(function (fmts) {
+      var hints = new Map();
+      hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, fmts);
+      hints.set(Z.DecodeHintType.TRY_HARDER, true);
+      var r = new Z.MultiFormatReader(); r.setHints(hints);
+      [1600, 1200, 900, 2400].some(function (side) {
+        var k = Math.min(1, side / Math.max(bmp.width, bmp.height));
+        var c = document.createElement("canvas");
+        c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+        c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+        try {
+          found.push(r.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(c)))).getText());
+          return true;
+        } catch (e) { return k === 1; }
+      });
+    });
+    return found;
+  }
+
   async function scanPhoto(file) {
     status("Analyse de la photo…");
     try {
       var det = await getNativeDetector();
-      var text = null;
-      if (det) {
-        var bmp = await createImageBitmap(file);
-        var codes = await det.detect(bmp);
-        if (codes.length) text = codes[0].rawValue;
-      }
-      if (!text) {
-        var reader = await getZXingReader();
-        var url = URL.createObjectURL(file);
-        try { text = (await reader.decodeFromImageUrl(url)).getText(); }
-        catch (e) { text = null; }
-        finally { URL.revokeObjectURL(url); }
-      }
-      if (text) { lastText = ""; onCode(text); }
+      var bmp = await createImageBitmap(file);
+      var texts = [];
+      if (det) texts = (await det.detect(bmp)).map(function (c) { return c.rawValue; });
+      if (!texts.length) texts = await zxingDecodeAll(bmp);
+      texts = texts.filter(function (t, i) { return t && texts.indexOf(t) === i; });
+      if (texts.length) texts.forEach(function (t) { lastText = ""; onCode(t); });
       else status("Aucun code trouvé sur la photo. Essayez une image plus nette, avec le code bien cadré.", "bad");
     } catch (e) {
       status((e && e.message) || "Lecture de la photo impossible.", "bad");
