@@ -55,6 +55,8 @@ section.panel {
 }
 label { display: block; font-weight: 500; margin-bottom: .4rem; }
 .hint { color: var(--muted); font-size: .875rem; margin: .4rem 0 0; }
+.engine-opt { margin-top: 1rem; }
+.engine-opt select { max-width: 100%; }
 label.check-opt { display: flex; align-items: center; gap: .45rem; margin: .9rem 0 0; cursor: pointer; }
 label.check-opt input { width: 1.1rem; height: 1.1rem; accent-color: var(--accent); margin: 0; }
 textarea, input[type=text] {
@@ -158,6 +160,16 @@ td:first-child { font-family: var(--mono); }
       <input type="file" id="file-photo" accept="image/*" capture="environment" hidden>
       <button type="button" id="btn-example">Charger des exemples</button>
       <button type="button" id="btn-clear">Effacer</button>
+    </div>
+    <div class="engine-opt">
+      <label for="engine">Moteur de lecture</label>
+      <select id="engine">
+        <option value="auto">Automatique (natif, sinon zxing-wasm)</option>
+        <option value="native">Natif du navigateur (BarcodeDetector)</option>
+        <option value="wasm">zxing-wasm (zxing-cpp, recommandé)</option>
+        <option value="zxingjs">@zxing/library (ancien moteur)</option>
+      </select>
+      <p class="hint" id="engine-info" aria-live="polite"></p>
     </div>
     <label class="check-opt"><input type="checkbox" id="strict-gs1" checked> Lecture GS1 stricte</label>
     <p class="hint">Activée, un code scanné n'est converti en Digital Link que si c'est une vraie chaîne GS1 (valeurs complètes, dates plausibles). Désactivée, tout code numérique est découpé en AI, même tronqué : par exemple 1125085400102131 donne /00/102131?11=250854.</p>
@@ -514,10 +526,12 @@ td:first-child { font-family: var(--mono); }
     return "https://id.gs1.org" + path + (query ? "?" + query : "");
   }
   // Transforme le texte lu en ligne exploitable par le vérificateur
-  function normaliseScan(text) {
+  // meta.gs1 : true/false si le moteur sait dire que le symbole porte du contenu GS1 (FNC1, ]C1/]d2/]Q3), sinon undefined
+  function normaliseScan(text, meta) {
     var t = text.trim();
     if (/^https?:\/\//i.test(t)) return t;
     if (/^\d{8}$|^\d{12,14}$|^\d{18}$/.test(t)) return t;          // EAN/UPC/ITF-14/SSCC seul
+    if (strictGs1.checked && meta && meta.gs1 === false) return t;  // ex. Code 128 simple (]C0) : pas de découpage en AI
     var pairs = parseElementString(t);
     if (pairs) { var dl = toDigitalLink(pairs); if (dl) return dl; }
     return t;
@@ -529,11 +543,105 @@ td:first-child { font-family: var(--mono); }
   var video = document.getElementById("video");
   var frame = scannerBox.querySelector(".frame");
   var ZXING_URL = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
+  var ZXING_WASM_URL = "https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.4/dist/es/reader/index.js";
   var NATIVE_FORMATS = ["qr_code", "data_matrix", "ean_13", "ean_8", "upc_a", "upc_e", "code_128", "itf"];
+  var WASM_FORMATS = ["QRCode", "DataMatrix", "EAN13", "EAN8", "UPCA", "UPCE", "Code128", "ITF"];
   var nativeDetector = null, zxingReader = null, zxingHints = null, stream = null, loopTimer = null;
+  var zxingWasm = null;
   var lastText = "", lastTime = 0;
 
   function status(msg, cls) { scanStatus.textContent = msg; scanStatus.className = "scan-status" + (cls ? " " + cls : ""); }
+
+  // ---------- Moteurs de lecture ----------
+  // Chaque moteur expose decode(source, photo) -> [{ text, format, gs1 }] ;
+  // source = <video>, <canvas> ou ImageBitmap. gs1 vaut undefined si le moteur ne sait pas le dire.
+  var ENGINE_LABELS = {
+    native: "Natif du navigateur (BarcodeDetector)",
+    wasm: "zxing-wasm 3.1.4 (zxing-cpp)",
+    zxingjs: "@zxing/library 0.21.3"
+  };
+  var engineSel = document.getElementById("engine");
+  var engineInfo = document.getElementById("engine-info");
+  var currentEngine = null;   // { id, label, decode }
+
+  function loadZXingWasm() {
+    if (zxingWasm) return zxingWasm;
+    zxingWasm = import(ZXING_WASM_URL).catch(function () {
+      zxingWasm = null;
+      throw new Error("Chargement de zxing-wasm impossible (connexion requise la première fois).");
+    });
+    return zxingWasm;
+  }
+
+  function toCanvas(source, maxSide) {
+    var w = source.videoWidth || source.width, h = source.videoHeight || source.height;
+    var k = maxSide ? Math.min(1, maxSide / Math.max(w, h)) : 1;
+    var c = document.createElement("canvas");
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    c.getContext("2d").drawImage(source, 0, 0, c.width, c.height);
+    return c;
+  }
+
+  var ENGINES = {
+    native: async function () {
+      var det = await getNativeDetector();
+      if (!det) throw new Error("Ce navigateur n'a pas de lecteur natif (BarcodeDetector) avec QR et DataMatrix.");
+      return { id: "native", label: ENGINE_LABELS.native, decode: async function (source) {
+        return (await det.detect(source)).map(function (c) { return { text: c.rawValue, format: c.format }; });
+      } };
+    },
+    wasm: async function () {
+      var Zw = await loadZXingWasm();
+      var opts = { formats: WASM_FORMATS, tryHarder: true, maxNumberOfSymbols: 4 };
+      return { id: "wasm", label: ENGINE_LABELS.wasm, decode: async function (source, photo) {
+        var c = toCanvas(source, photo ? 2400 : 0);
+        var img = c.getContext("2d").getImageData(0, 0, c.width, c.height);
+        return (await Zw.readBarcodes(img, opts)).filter(function (r) { return r.isValid; }).map(function (r) {
+          return { text: r.text, format: r.format + " " + r.symbologyIdentifier,
+                   gs1: r.contentType === "GS1" || /^\](C1|e0|d2|Q3|J1)/.test(r.symbologyIdentifier) };
+        });
+      } };
+    },
+    zxingjs: async function () {
+      var Z = await loadZXing();
+      await getZXingReader();
+      var mfr = new Z.MultiFormatReader();
+      mfr.setHints(zxingHints);
+      return { id: "zxingjs", label: ENGINE_LABELS.zxingjs, decode: async function (source, photo) {
+        if (photo) return (await zxingDecodeAll(source)).map(function (t) { return { text: t }; });
+        try {
+          var res = mfr.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(source))));
+          return [{ text: res.getText(), format: Z.BarcodeFormat[res.getBarcodeFormat()] }];
+        } catch (e) { return []; }
+      } };
+    }
+  };
+
+  async function getEngine() {
+    var want = engineSel.value;
+    if (currentEngine && (currentEngine.choice === want)) return currentEngine;
+    var eng;
+    if (want === "auto") {
+      eng = (await getNativeDetector()) ? await ENGINES.native() : await ENGINES.wasm();
+      eng.label = "Automatique → " + eng.label;
+    } else {
+      eng = await ENGINES[want]();
+    }
+    eng.choice = want;
+    currentEngine = eng;
+    engineInfo.textContent = "Lecteur utilisé : " + eng.label;
+    return eng;
+  }
+
+  function engineChanged() {
+    try { localStorage.setItem("gs1-engine", engineSel.value); } catch (e) {}
+    currentEngine = null;
+    engineInfo.textContent = "Lecteur choisi : " + engineSel.options[engineSel.selectedIndex].text + " (chargé au prochain scan)";
+    if (stream) { stopScan(); startScan(); }   // relance la caméra avec le nouveau moteur
+  }
+  try { var saved = localStorage.getItem("gs1-engine"); if (saved && ENGINES[saved] || saved === "auto") engineSel.value = saved; } catch (e) {}
+  engineSel.addEventListener("change", engineChanged);
+  engineInfo.textContent = "Lecteur choisi : " + engineSel.options[engineSel.selectedIndex].text + " (chargé au premier scan)";
 
   async function getNativeDetector() {
     if (nativeDetector !== null) return nativeDetector;
@@ -605,11 +713,12 @@ td:first-child { font-family: var(--mono); }
     } catch (e) {}
   }
 
-  function onCode(text) {
+  function onCode(text, meta) {
+    meta = meta || {};
     var now = Date.now();
     if (text === lastText && now - lastTime < 2500) return;   // évite les doublons pendant le scan continu
     lastText = text; lastTime = now;
-    var line = normaliseScan(text);
+    var line = normaliseScan(text, meta);
     var current = input.value.replace(/\s+$/, "");
     input.value = (current ? current + "\n" : "") + line;
     render();
@@ -620,6 +729,13 @@ td:first-child { font-family: var(--mono); }
     var cls = ok ? "hit" : "miss";
     frame.classList.add(cls); setTimeout(function () { frame.classList.remove(cls); }, ok ? 400 : 700);
     status((ok ? "Code valide : " : r.nonGs1 ? "Code non GS1, rien à contrôler : " : "Code non valide : ") + line, ok ? "ok" : "bad");
+    if (currentEngine) {
+      engineInfo.textContent = "Lecteur utilisé : " + currentEngine.label +
+        (meta.format ? " · dernier code : " + meta.format : "") +
+        (/^https?:\/\//i.test(text.trim()) ? "" :   // un Digital Link est une URL : la notion de chaîne GS1 ne s'applique pas
+          meta.gs1 === true ? " (chaîne GS1)" : meta.gs1 === false ? " (pas une chaîne GS1)" : "") +
+        (text.trim() !== line ? " · brut : " + text.trim().replace(/\u001d/g, "<GS>") : "");
+    }
   }
 
   function cameraError(e) {
@@ -697,59 +813,37 @@ td:first-child { font-family: var(--mono); }
     scannerBox.hidden = false;
     status("Ouverture de la caméra…");
     var constraints = { video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false };
-    var det = await getNativeDetector();
     try {
-      if (det) {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = stream;
-        await video.play();
-        setupTorch();
-        status("Placez le QR code ou le code-barres dans le cadre.");
-        var tick = async function () {
-          if (!stream) return;
+      status("Chargement du lecteur…");
+      var eng = await getEngine();
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      video.srcObject = stream;
+      await video.play();
+      setupTorch();
+      status("Placez le QR code ou le code-barres dans le cadre. Lecteur : " + eng.label);
+      // Boucle maison (decodeFromConstraints de @zxing/library ne décode rien sur le flux vidéo) :
+      // on recadre sur la zone du viseur, on réduit l'image, puis on décode avec le moteur choisi.
+      var work = document.createElement("canvas");
+      var wctx = work.getContext("2d", { willReadFrequently: true });
+      var tick = async function () {
+        if (!stream) return;
+        var vw = video.videoWidth, vh = video.videoHeight;
+        if (vw && vh) {
+          // zone un peu plus large que le cadre (.frame : inset 18% 12%)
+          var sw = vw * 0.88, sh = vh * 0.76;
+          var scale = Math.min(1, 800 / sw);
+          work.width = Math.round(sw * scale); work.height = Math.round(sh * scale);
+          wctx.drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, work.width, work.height);
           try {
-            var codes = await det.detect(video);
-            if (codes.length) onCode(codes[0].rawValue);
+            var codes = await eng.decode(work, false);
+            if (codes.length && stream) onCode(codes[0].text, codes[0]);
           } catch (e) {}
-          loopTimer = setTimeout(tick, 200);
-        };
-        tick();
-      } else {
-        // Safari / Firefox / Chrome desktop : pas de BarcodeDetector.
-        // Boucle maison plutôt que decodeFromConstraints de ZXing, qui ne décode rien sur le flux vidéo :
-        // on recadre sur la zone du viseur, on réduit l'image, puis on décode.
-        status("Chargement du lecteur…");
-        var Z = await loadZXing();
-        await getZXingReader();
-        var mfr = new Z.MultiFormatReader();
-        mfr.setHints(zxingHints);
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = stream;
-        await video.play();
-        setupTorch();
-        status("Placez le QR code ou le code-barres dans le cadre.");
-        var work = document.createElement("canvas");
-        var wctx = work.getContext("2d", { willReadFrequently: true });
-        var zTick = function () {
-          if (!stream) return;
-          var vw = video.videoWidth, vh = video.videoHeight;
-          if (vw && vh) {
-            // zone un peu plus large que le cadre (.frame : inset 18% 12%)
-            var sw = vw * 0.88, sh = vh * 0.76;
-            var scale = Math.min(1, 800 / sw);
-            work.width = Math.round(sw * scale); work.height = Math.round(sh * scale);
-            wctx.drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, work.width, work.height);
-            try {
-              var bb = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(work)));
-              onCode(mfr.decode(bb).getText());
-            } catch (e) {}
-          }
-          loopTimer = setTimeout(zTick, 150);
-        };
-        zTick();
-      }
+        }
+        if (stream) loopTimer = setTimeout(tick, 150);
+      };
+      tick();
     } catch (e) {
-      if (e && e.message && !e.name) { status(e.message, "bad"); stopScan(); }
+      if (e && e.message && (!e.name || e.name === "Error")) { status(e.message, "bad"); stopScan(); }
       else cameraError(e);
     }
   }
@@ -794,14 +888,12 @@ td:first-child { font-family: var(--mono); }
   async function scanPhoto(file) {
     status("Analyse de la photo…");
     try {
-      var det = await getNativeDetector();
+      var eng = await getEngine();
       var bmp = await createImageBitmap(file);
-      var texts = [];
-      if (det) texts = (await det.detect(bmp)).map(function (c) { return c.rawValue; });
-      if (!texts.length) texts = await zxingDecodeAll(bmp);
-      texts = texts.filter(function (t, i) { return t && texts.indexOf(t) === i; });
-      if (texts.length) texts.forEach(function (t) { lastText = ""; onCode(t); });
-      else status("Aucun code trouvé sur la photo. Essayez une image plus nette, avec le code bien cadré.", "bad");
+      var codes = await eng.decode(bmp, true), seen = {};
+      codes = codes.filter(function (c) { return c.text && !seen[c.text] && (seen[c.text] = 1); });
+      if (codes.length) codes.forEach(function (c) { lastText = ""; onCode(c.text, c); });
+      else status("Aucun code trouvé sur la photo (lecteur : " + eng.label + "). Essayez une image plus nette ou un autre moteur.", "bad");
     } catch (e) {
       status((e && e.message) || "Lecture de la photo impossible.", "bad");
     }
