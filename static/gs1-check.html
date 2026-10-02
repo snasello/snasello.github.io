@@ -542,7 +542,7 @@ td:first-child { font-family: var(--mono); }
   var scannerBox = document.getElementById("scanner");
   var video = document.getElementById("video");
   var frame = scannerBox.querySelector(".frame");
-  var ZXING_URL = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
+  var ZXING_URL = "https://cdn.jsdelivr.net/npm/@zxing/library@0.23.0/umd/index.min.js";
   var ZXING_WASM_URL = "https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.4/dist/es/reader/index.js";
   var NATIVE_FORMATS = ["qr_code", "data_matrix", "ean_13", "ean_8", "upc_a", "upc_e", "code_128", "itf"];
   var WASM_FORMATS = ["QRCode", "DataMatrix", "EAN13", "EAN8", "UPCA", "UPCE", "Code128", "ITF"];
@@ -558,7 +558,7 @@ td:first-child { font-family: var(--mono); }
   var ENGINE_LABELS = {
     native: "Natif du navigateur (BarcodeDetector)",
     wasm: "zxing-wasm 3.1.4 (zxing-cpp)",
-    zxingjs: "@zxing/library 0.21.3"
+    zxingjs: "@zxing/library 0.23.0"
   };
   var engineSel = document.getElementById("engine");
   var engineInfo = document.getElementById("engine-info");
